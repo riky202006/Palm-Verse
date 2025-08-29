@@ -5,10 +5,9 @@ import torch.nn as nn
 from torchvision import transforms
 import numpy as np
 import json
+from collections import deque # Import deque for an efficient history list
 
 # --- 1. Define the Original Neural Network (CNN) Architecture ---
-# This class MUST be identical to the one you used to train your model.
-# This will fix the "size mismatch" error.
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes):
         super(SimpleCNN, self).__init__()
@@ -55,7 +54,6 @@ if __name__ == '__main__':
         print(f"Error: {MAPPING_PATH} not found.")
         exit()
 
-    # Initialize the model with the correct, original architecture
     model = SimpleCNN(num_classes=num_classes).to(device)
     
     try:
@@ -74,6 +72,11 @@ if __name__ == '__main__':
 
     cap = cv2.VideoCapture(0)
     roi_x, roi_y, roi_w, roi_h = 300, 100, 250, 250
+
+    # --- Prediction Smoothing Variables ---
+    # Create a deque to store the last 15 predictions
+    prediction_history = deque(maxlen=15)
+    stable_prediction = "No gesture detected"
 
     while True:
         ret, frame = cap.read()
@@ -104,11 +107,28 @@ if __name__ == '__main__':
             predicted_class = idx_to_class[predicted_idx.item()]
             confidence_score = confidence.item() * 100
 
-        display_text = "No gesture detected"
-        if confidence_score > 60:
-            display_text = f"Prediction: {predicted_class} ({confidence_score:.2f}%)"
+        # --- Smoothing Logic ---
+        if confidence_score > 70: # Use a slightly higher confidence for stability
+            prediction_history.append(predicted_class)
+        else:
+            # If confidence is low, start clearing the history
+            if len(prediction_history) > 0:
+                prediction_history.popleft()
 
-        cv2.putText(frame, display_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        # Check for a stable prediction only when the history is full
+        if len(prediction_history) == 15:
+            # Find the most common prediction in the history
+            most_common = max(set(prediction_history), key=prediction_history.count)
+            # Check if this prediction is dominant (e.g., appears > 50% of the time)
+            if prediction_history.count(most_common) > 7:
+                stable_prediction = most_common
+        
+        # If history becomes empty, reset the stable prediction
+        if len(prediction_history) == 0:
+            stable_prediction = "No gesture detected"
+
+        # Display the stable prediction on the screen
+        cv2.putText(frame, f"Prediction: {stable_prediction}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
         cv2.imshow('frame', frame)
         cv2.imshow('mask', mask)
 
